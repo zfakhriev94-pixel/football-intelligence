@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101827"><title>Football Intelligence</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#131e30;--muted:#91a2ba;--line:#26364d;--accent:#42d392;--warn:#ffc66d}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(150deg,#101d30,var(--bg) 55%);color:#eef4fc;font:15px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+header{padding:24px max(18px,calc((100% - 1080px)/2));border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{font-size:22px;margin:0}header p{margin:4px 0 0;color:var(--muted);font-size:13px}.wrap{max-width:1080px;margin:auto;padding:20px 16px 60px}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 18px}button,input,select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:11px 13px;background:#111c2c;color:#eef4fc}button{cursor:pointer;background:#1c7554;border-color:#238b63;font-weight:650}button.secondary{background:#172438;border-color:var(--line)}button:disabled{opacity:.5}
+.status{color:var(--muted);font-size:13px;margin:10px 0 16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:16px;cursor:pointer;transition:.15s}.card:hover{border-color:#4b9b7c;transform:translateY(-1px)}
+.league{color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:8px}.teams{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;margin:20px 0 14px}.team:last-child{text-align:right}.team{font-weight:650}.score{font-size:27px;font-weight:800;white-space:nowrap}.minute{color:var(--warn);font-size:12px;margin-top:8px}.meta{color:var(--muted);font-size:12px;display:flex;justify-content:space-between}
+.empty,.error{background:var(--panel);border:1px solid var(--line);padding:20px;border-radius:12px;color:var(--muted)}
+.modal{display:none;position:fixed;inset:0;background:#050a12dd;padding:18px;overflow:auto;z-index:5}.modal.open{display:block}.dialog{max-width:760px;margin:5vh auto;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px}.dialog-head{display:flex;justify-content:space-between;gap:10px;align-items:start}.dialog h2{margin:0 0 6px}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px}.stat{background:#0e1929;border:1px solid var(--line);padding:12px;border-radius:10px}.stat b{display:block;font-size:19px;margin-top:4px}.stat span{font-size:12px;color:var(--muted)}.foot{font-size:12px;color:var(--muted);line-height:1.5;margin-top:24px}
+@media(max-width:480px){header{align-items:flex-start;flex-direction:column}.stats{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<header><div><h1>⚽ Football Intelligence</h1><p>Матчи, live-статистика и проверяемые данные</p></div><div id="clock" class="status">Подключение…</div></header>
+<main class="wrap">
+<div class="toolbar"><button id="liveBtn">● LIVE сейчас</button><button class="secondary" id="todayBtn">Матчи сегодня</button><input id="date" type="date" aria-label="Дата"><button class="secondary" id="dateBtn">Показать дату</button><button class="secondary" id="refreshBtn">Обновить</button></div>
+<div class="status" id="status">Загружаю матчи…</div><section class="grid" id="matches"></section>
+<p class="foot">Источник данных: Soccer Data API. Обновление списка — каждые 30 секунд; live-статистика матча — при открытии и далее каждые 30 секунд. Доступность xG и отдельных показателей зависит от турнира и тарифа источника. Прогнозы не являются гарантией результата.</p>
+</main>
+<div class="modal" id="modal"><div class="dialog"><div class="dialog-head"><div><h2 id="modalTitle">Матч</h2><div id="modalSub" class="status"></div></div><button class="secondary" id="closeBtn">Закрыть</button></div><div id="matchStats" class="stats"></div><div id="modalStatus" class="status"></div></div></div>
+<script>
+const $=s=>document.querySelector(s);let activeMatch=null,statsTimer=null,lastMode="live";
+const dateNow=()=>new Date().toISOString().slice(0,10);$("#date").value=dateNow();
+const val=(x)=>x===null||x===undefined?"—":x;
+const pair=(obj)=>obj&&obj.all?obj.all:null;
+const scoreOf=m=>{const s=m.score||{};return [s.home??s.regulation?.home??"—",s.away??s.regulation?.away??"—"]};
+function minute(m){return m.live?.elapsed_minutes!=null?m.live.elapsed_minutes+"'":(m.live?.match_status||m.status||"");}
+function card(m){const [h,a]=scoreOf(m);return '<article class="card" data-id="'+m.id+'"><div class="league"><span>'+esc(m.competition?.name||m.competition_name||m.competition_id||"Футбол")+'</span><span>'+esc(m.status==="live"?"● LIVE":m.status||"")+'</span></div><div class="teams"><div class="team">'+esc(m.home_team?.name||"Хозяева")+'</div><div class="score">'+h+' : '+a+'</div><div class="team">'+esc(m.away_team?.name||"Гости")+'</div></div><div class="meta"><span>'+esc(minute(m))+'</span><span>'+esc(m.kickoff_at?new Date(m.kickoff_at).toLocaleString():"Открыть статистику")+'</span></div></article>'}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+async function load(mode="live",date){lastMode=mode;$("#status").textContent="Запрашиваю актуальные данные…";$("#matches").innerHTML="";try{const p=new URLSearchParams(mode==="live"?{status:"live"}:{date_from:date||dateNow(),date_to:date||dateNow()});const r=await fetch("/api/matches?"+p);const j=await r.json();if(!r.ok)throw Error(j.error||"Ошибка API "+r.status);const rows=j.data||[];$("#status").textContent=rows.length?"Найдено матчей: "+(j.meta?.total??rows.length):"Матчей не найдено. Проверьте дату или выберите LIVE.";$("#matches").innerHTML=rows.map(card).join("")||'<div class="empty">На выбранный период матчей нет.</div>';$("#clock").textContent="Обновлено: "+new Date().toLocaleTimeString();}catch(e){$("#status").textContent="Не удалось загрузить матчи";$("#matches").innerHTML='<div class="error">'+esc(e.message)+'</div>';}}
+const labels={ball_possession:"Владение, %",expected_goals:"Ожидаемые голы (xG)",total_shots:"Удары",shots_on_target:"Удары в створ",corner_kicks:"Угловые",big_chances:"Голевые моменты",fouls:"Фолы",yellow_cards:"Жёлтые карточки",red_cards:"Красные карточки",goalkeeper_saves:"Сейвы",accurate_passes:"Точные передачи",tackles:"Отборы",interceptions:"Перехваты"};
+async function openMatch(id){activeMatch=id;$("#modal").classList.add("open");$("#modalTitle").textContent="Статистика матча";$("#modalSub").textContent="Загружаю live-данные…";await loadStats();clearInterval(statsTimer);statsTimer=setInterval(()=>{if(activeMatch)loadStats()},30000);}
+async function loadStats(){if(!activeMatch)return;try{const r=await fetch("/api/matches?match_id="+encodeURIComponent(activeMatch)+"&view=live-stats");const j=await r.json();if(!r.ok)throw Error(j.error||"Live-статистика недоступна");const d=j.data||{},meta=d.meta||{},stats=d.stats||{};$("#modalSub").textContent=(meta.elapsed_minutes!=null?meta.elapsed_minutes+"' · ":"")+val(meta.home_goals)+" : "+val(meta.away_goals)+" · "+val(meta.match_status);let html="";for(const [k,label] of Object.entries(labels)){const p=pair(stats[k]);if(p)html+='<div class="stat"><span>'+label+'</span><b>'+val(p.home)+' — '+val(p.away)+'</b></div>';}$("#matchStats").innerHTML=html||'<div class="empty">Провайдер пока не передал статистику по этому матчу.</div>';$("#modalStatus").textContent="Данные источника: "+new Date().toLocaleTimeString()+" · обновление каждые 30 сек.";}catch(e){$("#matchStats").innerHTML='<div class="error">'+esc(e.message)+'</div>';$("#modalStatus").textContent="Если матч уже завершён, live-статистика может быть недоступна."}}
+$("#matches").addEventListener("click",e=>{const c=e.target.closest("[data-id]");if(c)openMatch(c.dataset.id)});$("#liveBtn").onclick=()=>load("live");$("#todayBtn").onclick=()=>load("date",dateNow());$("#dateBtn").onclick=()=>load("date",$("#date").value||dateNow());$("#refreshBtn").onclick=()=>load(lastMode,lastMode==="date"?$("#date").value:undefined);$("#closeBtn").onclick=()=>{activeMatch=null;clearInterval(statsTimer);$("#modal").classList.remove("open")};$("#modal").onclick=e=>{if(e.target.id==="modal")$("#closeBtn").click()};load("live");setInterval(()=>{if(!activeMatch)load(lastMode,lastMode==="date"?$("#date").value:undefined)},30000);
+</script>
+</body></html>
